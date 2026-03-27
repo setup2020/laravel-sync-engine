@@ -1,0 +1,22 @@
+{
+  "name": "png/laravel-sync-engine",
+  "description": "Offline-first bidirectional sync engine for Laravel",
+  "type": "library",
+  "license": "MIT",
+  "autoload": {
+    "psr-4": {
+      "png\\SyncEngine\\": "src/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "png\\SyncEngine\\SyncServiceProvider"
+      ]
+    }
+  },
+  "require": {
+    "php": "^7.4|^8.0",
+    "illuminate/support": "^8.0|^9.0|^10.0|^11.0"
+  }
+}
