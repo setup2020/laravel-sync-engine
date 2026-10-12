@@ -8,4 +8,5 @@ Route::prefix('sync-dashboard')
         Route::get('/', [DashboardController::class, 'index']);
         Route::get('/logs', [DashboardController::class, 'logs']);
         Route::get('/stats', [DashboardController::class, 'stats']);
+        Route::get('/states', [DashboardController::class, 'states']);
     });

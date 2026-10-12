@@ -4,6 +4,7 @@ namespace png\SyncEngine\Http\Controllers;
 
 use Illuminate\Routing\Controller;
 use png\SyncEngine\Models\SyncLog;
+use png\SyncEngine\Models\SyncState;
 use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
@@ -16,6 +17,11 @@ class DashboardController extends Controller
     public function logs()
     {
         return SyncLog::latest()->paginate(30);
+    }
+
+    public function states()
+    {
+        return SyncState::orderBy('table_name')->get();
     }
 
     public function stats()
