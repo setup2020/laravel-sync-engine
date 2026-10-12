@@ -4,41 +4,25 @@ Ce plugin (`laravel-sync-engine`) est un **Moteur de Synchronisation de base de 
 
 Il sert principalement à faire le pont entre une application locale (un client) et un serveur centralisé (ou entre plusieurs applications) pour s'assurer qu'elles ont toutes les mêmes données. C'est idéal pour les applications capables de fonctionner hors connexion (offline-first) ou les architectures distribuées.
 
-## Installation (En local)
+## Installation
 
-Si vous développez ce plugin localement et souhaitez l'installer dans votre projet Laravel (ex `imv-backend-laravel`), configurez le `composer.json` de votre **projet principal**.
-
-**1. Ajouter le repository local**  
-Éditer le `composer.json` du projet qui va consommer votre plugin :
-
-```json
-"repositories": [
-    {
-        "type": "path",
-        "url": "../packages/png/laravel-sync-engine"
-    }
-]
-```
-
-**2. Require le package**  
-Dans le terminal, à la racine de votre projet principal :
+Installez le package via Composer :
 
 ```bash
 composer require png/laravel-sync-engine
 ```
 
-> **Note :** Si vous rencontrez une erreur concernant l'extension PHP `ext-http` introuvable ou si une autre extension bloque, vous pouvez forcer l'installation en rajoutant simplement le flag d'ignorance :
-> `composer require png/laravel-sync-engine --ignore-platform-reqs`
+### Publier la configuration
 
-**3. Publier la configuration**  
-Afin de générer le fichier `config/sync-engine.php` dans le host :
+Afin de générer le fichier de configuration `config/sync-engine.php` :
 
 ```bash
 php artisan vendor:publish --provider="png\SyncEngine\SyncServiceProvider"
 ```
 
-**4. Mettre à jour le `.env`**  
-N'oubliez pas d'ajouter les clés de configuration pertinentes sur vos plateformes :
+### Configuration du fichier `.env`
+
+Ajoutez les clés de configuration pertinentes sur vos plateformes :
 
 ```env
 SYNC_SERVER_URL=https://votre-serveur-central.com
@@ -48,42 +32,6 @@ SYNC_API_KEY=votre_cle_secrete_hyper_longue
 # Ajoutez ceci UNIQUEMENT sur le serveur central pour activer l'historique global :
 # SYNC_IS_SERVER=true
 ```
-
-## Installation (Sur Serveur de Production)
-
-Puisque ce plugin est privé, vous avez 2 options professionnelles pour l'installer sur votre serveur en ligne :
-
-**Option 1 : Dépôt Git Privé (Recommandé)**
-
-1. Hébergez ce plugin en tant que dépôt privé sur **GitHub, GitLab ou Bitbucket**.
-2. Dans le `composer.json` du projet cible de votre Serveur, ajoutez :
-
-```json
-"repositories": [
-    {
-        "type": "vcs",
-        "url": "git@github.com:votre-compte/laravel-sync-engine.git"
-    }
-]
-```
-
-3. Lancez simplement `composer require png/laravel-sync-engine` (Composer téléchargera le plugin depuis votre Git privé grâce à vos clés SSH serveur).
-
-**Option 2 : Le Dossier Inclus (Monorepo)**
-
-1. Glissez simplement de dossier `packages` à l'intérieur du serveur de votre projet principal Laravel (ex: `/var/www/mon-projet-laravel/packages/png/laravel-sync-engine`).
-2. Indiquez le chemin relatif direct dans votre `composer.json` :
-
-```json
-"repositories": [
-    {
-        "type": "path",
-        "url": "./packages/png/laravel-sync-engine"
-    }
-]
-```
-
-3. Lancez `composer install`.
 
 ## Fonctionnement du Moteur
 
@@ -309,8 +257,3 @@ php artisan schedule:work
 ---
 
 En résumé, **Laravel Sync Engine** est un outil qui permet à votre application de collecter localement toutes les alertes de modifications de la base de données, pour ensuite les synchroniser de manière silencieuse en réseau avec un nœud distant garantissant une équivalence parfaite sur tous vos environnements.
-
-./vendor/bin/sail exec laravel.imv_client2 rm -rf vendor/png/laravel-sync-engine
-./vendor/bin/sail exec laravel.imv_client2 composer update png/laravel-sync-engine
-
-./vendor/bin/sail exec laravel.imv_client2 php artisan optimize
