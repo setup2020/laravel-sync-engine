@@ -39,8 +39,22 @@ class SyncPushJob implements ShouldQueue
             $tableName = (new $this->modelClass)->getTable();
 
             if ($response->successful()) {
-                $this->modelClass::whereIn('id', $records->pluck('id'))
-                    ->update(['is_synced' => true]);
+                $instance = new $this->modelClass;
+                $keyName = $instance->getKeyName();
+
+                if (is_array($keyName)) {
+                    // Clé composite : mise à jour par combinaison des colonnes de la clé
+                    foreach ($records as $record) {
+                        $itemQuery = $this->modelClass::query();
+                        foreach ($keyName as $col) {
+                            $itemQuery->where($col, $record->$col);
+                        }
+                        $itemQuery->update(['is_synced' => true]);
+                    }
+                } else {
+                    $this->modelClass::whereIn($keyName, $records->pluck($keyName))
+                        ->update(['is_synced' => true]);
+                }
 
                 \png\SyncEngine\Models\SyncLog::where('table', $tableName)
                     ->whereIn('uuid', $records->pluck('uuid'))

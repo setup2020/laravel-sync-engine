@@ -186,8 +186,11 @@ return new class extends Migration {
             $table->syncable();
         });
 
-        // 2. (Très Important) On génère magiquement un UUID pour les anciennes données existantes
+        // 2. (Très Important) On génère un UUID pour les anciennes données existantes
+        // Clé simple (par défaut 'id') :
         SyncEngine::populateExistingData('votre_table');
+        // Ou clé composite :
+        // SyncEngine::populateExistingData('votre_table', ['store_id', 'numero']);
     }
 
     public function down()
@@ -257,3 +260,45 @@ php artisan schedule:work
 ---
 
 En résumé, **Laravel Sync Engine** est un outil qui permet à votre application de collecter localement toutes les alertes de modifications de la base de données, pour ensuite les synchroniser de manière silencieuse en réseau avec un nœud distant garantissant une équivalence parfaite sur tous vos environnements.
+
+---
+
+## 📋 Récapitulatif : Serveur Central vs Application Locale
+
+Voici le guide rapide pour configurer chaque environnement :
+
+### 1. Serveur Central (Cloud / Hub)
+
+- **Rôle** : Reçoit les données (`Push`), sert de référence pour les conflits et fournit les mises à jour (`Pull`).
+- **Variables d'environnement (`.env`)** :
+  ```env
+  SYNC_IS_SERVER=true
+  SYNC_API_KEY=votre_cle_secrete_partagee
+  ```
+- **Base de données** :
+  - Exécuter les migrations (`php artisan migrate`). La table d'historique global `sync_histories` sera automatiquement créée grâce à `SYNC_IS_SERVER=true`.
+  - Vos tables synchronisées doivent comporter la macro `$table->syncable();`.
+- **Planificateur (Cron)** :
+  - ❌ **Aucun cron requis** pour la synchronisation (le serveur agit de manière passive aux requêtes API).
+
+---
+
+### 2. Application Locale (Client / Offline-first)
+
+- **Rôle** : Enregistre les modifications hors-ligne ou locales, pousse les données vers le serveur et récupère les nouveautés.
+- **Variables d'environnement (`.env`)** :
+  ```env
+  SYNC_SERVER_URL=https://votre-serveur-central.com
+  SYNC_CLIENT_ID=client-caisse-01 # Identifiant unique de ce client
+  SYNC_API_KEY=votre_cle_secrete_partagee
+  SYNC_BATCH_SIZE=1000 # Optionnel (défaut: 1000)
+  ```
+- **Base de données** :
+  - Vos tables synchronisées doivent comporter la macro `$table->syncable();`.
+  - La table `sync_histories` n'est pas créée localement.
+- **Planificateur (Cron)** :
+  - ⚠️ **Requis** : Ajouter la commande dans `app/Console/Kernel.php` (ou `routes/console.php` pour Laravel 11+) :
+    ```php
+    $schedule->command('sync:run')->everyMinute();
+    ```
+  - S'assurer que le planificateur Laravel tourne (`crontab` ou `php artisan schedule:work`).
