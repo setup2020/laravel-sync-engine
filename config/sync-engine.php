@@ -1,6 +1,6 @@
 <?php
 return [
-    'server_url' => rtrim(env('SYNC_SERVER_URL'), '/'),
+    'server_url' => rtrim(env('SYNC_ENGINE_URL', ''), '/'),
     'api_key'    => env('SYNC_API_KEY'),
     'client_id'  => env('SYNC_CLIENT_ID', 'default-client'),
 
