@@ -53,13 +53,47 @@ class SyncController
                 continue;
             }
 
-            $columns = \Illuminate\Support\Facades\Schema::getColumnListing($instance->getTable());
-            $cleanRow = \Illuminate\Support\Arr::only($row, $columns);
+            try {
+                $columns = \Illuminate\Support\Facades\Schema::getColumnListing($instance->getTable());
+                $cleanRow = \Illuminate\Support\Arr::only($row, $columns);
 
-            $instance->forceFill($cleanRow);
-            $instance->updated_at = now();
-            $instance->saveQuietly();
-            $insertedCount++;
+                $instance->forceFill($cleanRow);
+                $instance->updated_at = now();
+                $instance->saveQuietly();
+                $insertedCount++;
+            } catch (\Illuminate\Database\QueryException $qe) {
+                $conflictCount++;
+                Log::error("[Sync-Engine] Erreur de contrainte SQL lors du push sur '{$r->table}' pour l'UUID '{$row['uuid']}': " . $qe->getMessage());
+
+                \png\SyncEngine\Models\SyncLog::updateOrCreate(
+                    [
+                        'table' => $r->table,
+                        'uuid'  => $row['uuid'] ?? 'unknown'
+                    ],
+                    [
+                        'action'    => 'push',
+                        'status'    => 'error',
+                        'client_id' => $r->get('client_id', 'unknown'),
+                        'message'   => 'Erreur SQL : ' . $qe->getMessage()
+                    ]
+                );
+            } catch (\Throwable $e) {
+                $conflictCount++;
+                Log::error("[Sync-Engine] Erreur inattendue lors du push sur '{$r->table}' pour l'UUID '{$row['uuid']}': " . $e->getMessage());
+
+                \png\SyncEngine\Models\SyncLog::updateOrCreate(
+                    [
+                        'table' => $r->table,
+                        'uuid'  => $row['uuid'] ?? 'unknown'
+                    ],
+                    [
+                        'action'    => 'push',
+                        'status'    => 'error',
+                        'client_id' => $r->get('client_id', 'unknown'),
+                        'message'   => 'Erreur inattendue : ' . $e->getMessage()
+                    ]
+                );
+            }
         }
 
         Log::info("[Sync-Engine] Push traité. Intégrés: {$insertedCount}, Conflits ignorés: {$conflictCount}.");

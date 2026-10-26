@@ -66,7 +66,7 @@ class SyncPushJob implements ShouldQueue
                     ->whereIn('uuid', $records->pluck('uuid'))
                     ->update(['status' => 'error', 'message' => 'Erreur serveur: ' . $response->status()]);
 
-                Log::error('[Sync-Engine Local] Échec du Push côté serveur (Mauvaise requête ou accès refusé). Statut : ' . $response->status());
+                Log::error('[Sync-Engine Local] Échec du Push côté serveur (Mauvaise requête ou accès refusé). Statut : ' . $response->status() . ' - ' . $response->body());
             }
         } catch (\Exception $e) {
             $tableName = (new $this->modelClass)->getTable();
