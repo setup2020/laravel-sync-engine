@@ -61,8 +61,38 @@ class SyncPullJob implements ShouldQueue
                         $columns = \Illuminate\Support\Facades\Schema::getColumnListing((new $this->modelClass)->getTable());
                         $cleanRow = \Illuminate\Support\Arr::only($row, $columns);
                         $cleanRow['is_synced'] = true;
+                        if (in_array('base_version', $columns)) {
+                            $cleanRow['base_version'] = $cleanRow['version'] ?? 1;
+                        }
 
                         if ($model) {
+                            // Protection contre l'écrasement : si la donnée locale a été modifiée et non synchronisée
+                            if (!$model->is_synced) {
+                                $isConflict = false;
+                                if (in_array('base_version', $columns) && isset($model->base_version, $row['version'])) {
+                                    if ($model->base_version != $row['version']) {
+                                        $isConflict = true;
+                                    }
+                                } elseif (isset($model->version, $row['version']) && $model->version != $row['version']) {
+                                    $isConflict = true;
+                                }
+
+                                if ($isConflict) {
+                                    $errorCount++;
+                                    \png\SyncEngine\Models\SyncLog::updateOrCreate(
+                                        ['table' => $table, 'uuid' => $row['uuid']],
+                                        [
+                                            'action'    => 'pull',
+                                            'status'    => 'conflict',
+                                            'client_id' => $row['client_id'] ?? config('sync-engine.client_id'),
+                                            'message'   => 'Conflit au Pull : données modifiées en local et en ligne'
+                                        ]
+                                    );
+                                    Log::warning("[Sync-Engine Local] Conflit au Pull détecté pour l'UUID '{$row['uuid']}' : modifications locales préservées.");
+                                    continue;
+                                }
+                            }
+
                             $model->forceFill($cleanRow);
                             $model->saveQuietly();
 

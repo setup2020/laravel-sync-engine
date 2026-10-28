@@ -17,10 +17,11 @@ class SyncServiceProvider extends ServiceProvider
             $this->string('client_id')->nullable();
             $this->boolean('is_synced')->default($isSynced);
             $this->integer('version')->default(1);
+            $this->integer('base_version')->default(1);
         });
 
         Blueprint::macro('dropSyncable', function () {
-            $this->dropColumn(['uuid', 'client_id', 'is_synced', 'version']);
+            $this->dropColumn(['uuid', 'client_id', 'is_synced', 'version', 'base_version']);
         });
 
         // config
@@ -54,6 +55,7 @@ class SyncServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 \png\SyncEngine\Console\Commands\RunSyncCommand::class,
+                \png\SyncEngine\Console\Commands\UpgradeBaseVersionCommand::class,
             ]);
         }
     }

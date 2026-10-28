@@ -20,14 +20,19 @@ trait Syncable
             if (! isset($model->version)) {
                 $model->version = 1;
             }
+            if (static::hasSyncColumn($model, 'base_version') && ! isset($model->base_version)) {
+                $model->base_version = $model->version;
+            }
 
             // On s'assure qu'une donnée fraîchement créée soit envoyée !
             $model->is_synced = false;
         });
 
         static::updating(function ($model) {
-            // Empêcher le "marquage dirty" de repartir en boucle si l'on modifie uniquement le flag 'is_synced' manuellement
-            if ($model->isDirty('is_synced') && count($model->getDirty()) === 1) {
+            // Empêcher le "marquage dirty" de repartir en boucle si l'on modifie uniquement les drapeaux de synchro ('is_synced', 'base_version')
+            $dirtyKeys = array_keys($model->getDirty());
+            $syncControlKeys = ['is_synced', 'base_version'];
+            if (empty(array_diff($dirtyKeys, $syncControlKeys))) {
                 return;
             }
             self::markDirty($model);
@@ -45,6 +50,7 @@ trait Syncable
         $model->version++;
         $model->is_synced = false;
         $model->client_id = config('sync-engine.client_id');
+        // base_version reste inchangé pour conserver la référence de la dernière synchronisation
     }
 
     public function scopeDirty($q)
@@ -60,5 +66,20 @@ trait Syncable
         return [
             'client_id' => $this->client_id,
         ];
+    }
+
+    protected static array $syncColumnsCache = [];
+
+    protected static function hasSyncColumn($model, string $column): bool
+    {
+        $table = $model->getTable();
+        if (! isset(static::$syncColumnsCache[$table])) {
+            try {
+                static::$syncColumnsCache[$table] = \Illuminate\Support\Facades\Schema::getColumnListing($table);
+            } catch (\Throwable $e) {
+                return false;
+            }
+        }
+        return in_array($column, static::$syncColumnsCache[$table]);
     }
 }

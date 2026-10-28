@@ -52,6 +52,10 @@ class SyncEngine
                     $updateData['version'] = 1;
                 }
 
+                if (property_exists($row, 'base_version') && empty($row->base_version)) {
+                    $updateData['base_version'] = $updateData['version'] ?? 1;
+                }
+
                 if (property_exists($row, 'client_id') && empty($row->client_id)) {
                     $updateData['client_id'] = $clientId;
                 }

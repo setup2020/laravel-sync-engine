@@ -15,6 +15,9 @@ class SyncController
 
         $insertedCount = 0;
         $conflictCount = 0;
+        $syncedUuids = [];
+        $conflictedUuids = [];
+        $updatedVersions = [];
 
         foreach ($r->data as $row) {
             if (config('sync-engine.uses_auto_increment', true)) {
@@ -28,13 +31,33 @@ class SyncController
 
             $instance = $query->firstOrNew(['uuid' => $row['uuid']]);
 
-            // GESTION DES CONFLITS (Server Wins)
-            // Si le serveur a une version plus récente que celle proposée par le client, on rejette la modif du client.
-            // On inscrit ce conflit manuellement dans SyncLog pour laisser la main à l'administrateur !
+            // GESTION DES CONFLITS (Optimistic Concurrency Control - Approche A)
+            // Si l'enregistrement existe déjà sur le serveur et que sa version actuelle diffère de la
+            // version de départ (base_version) du client, la ligne a été modifiée en ligne entre temps !
+            $isConflict = false;
 
-            Log::info('Version', ['serveur' => $instance->version, 'client' => $row['version']]);
-            if ($instance->exists && isset($row['version']) && $instance->version > $row['version']) {
+            if ($instance->exists) {
+                if (isset($row['base_version'])) {
+                    // Si base_version est transmise par le client : vérification exacte OCC
+                    if ($instance->version != $row['base_version']) {
+                        $isConflict = true;
+                    }
+                } elseif (isset($row['version']) && $instance->version > $row['version']) {
+                    // Fallback rétrocompatible si l'ancien client n'envoie pas base_version
+                    $isConflict = true;
+                }
+            }
+
+            Log::info('[Sync-Engine] Vérification version', [
+                'serveur'        => $instance->exists ? $instance->version : null,
+                'base_version'   => $row['base_version'] ?? null,
+                'client_version' => $row['version'] ?? null,
+                'conflict'       => $isConflict
+            ]);
+
+            if ($isConflict) {
                 $conflictCount++;
+                $conflictedUuids[] = $row['uuid'];
 
                 \png\SyncEngine\Models\SyncLog::updateOrCreate(
                     [
@@ -58,11 +81,29 @@ class SyncController
                 $cleanRow = \Illuminate\Support\Arr::only($row, $columns);
 
                 $instance->forceFill($cleanRow);
+
+                // La nouvelle version sur le serveur prend en compte la progression du client
+                $targetVersion = max(
+                    (int) ($instance->version ?? 0) + 1,
+                    (int) ($row['version'] ?? 1)
+                );
+
+                $instance->version = $targetVersion;
+                if (in_array('base_version', $columns)) {
+                    $instance->base_version = $targetVersion;
+                }
+                if (in_array('is_synced', $columns)) {
+                    $instance->is_synced = true;
+                }
                 $instance->updated_at = now();
                 $instance->saveQuietly();
+
                 $insertedCount++;
+                $syncedUuids[] = $row['uuid'];
+                $updatedVersions[$row['uuid']] = $targetVersion;
             } catch (\Illuminate\Database\QueryException $qe) {
                 $conflictCount++;
+                $conflictedUuids[] = $row['uuid'] ?? 'unknown';
                 Log::error("[Sync-Engine] Erreur de contrainte SQL lors du push sur '{$r->table}' pour l'UUID '{$row['uuid']}': " . $qe->getMessage());
 
                 \png\SyncEngine\Models\SyncLog::updateOrCreate(
@@ -79,6 +120,7 @@ class SyncController
                 );
             } catch (\Throwable $e) {
                 $conflictCount++;
+                $conflictedUuids[] = $row['uuid'] ?? 'unknown';
                 Log::error("[Sync-Engine] Erreur inattendue lors du push sur '{$r->table}' pour l'UUID '{$row['uuid']}': " . $e->getMessage());
 
                 \png\SyncEngine\Models\SyncLog::updateOrCreate(
@@ -109,7 +151,12 @@ class SyncController
             ]);
         }
 
-        return response()->json(['ok' => true]);
+        return response()->json([
+            'ok'        => true,
+            'synced'    => $syncedUuids,
+            'conflicts' => $conflictedUuids,
+            'versions'  => $updatedVersions,
+        ]);
     }
 
 
@@ -207,30 +254,45 @@ class SyncController
             return response()->json(['error' => 'Aucun conflit actif trouvé pour cet enregistrement.'], 404);
         }
 
+        $modelClass = config('sync-engine.tables')[$r->table];
+        $query = $modelClass::query();
+        if (in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive($modelClass))) {
+            $query->withTrashed();
+        }
+
+        $instance = $query->firstOrNew(['uuid' => $r->uuid]);
+        $columns = \Illuminate\Support\Facades\Schema::getColumnListing($instance->getTable());
+
         if ($r->resolution === 'client') {
             // L'admin choisit d'écraser la donnée du Serveur par celle du Client
             $payload = json_decode($log->message, true);
             if ($payload) {
-                $modelClass = config('sync-engine.tables')[$r->table];
-                $query = $modelClass::query();
-                if (in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive($modelClass))) {
-                    $query->withTrashed();
-                }
-
-                $instance = $query->firstOrNew(['uuid' => $r->uuid]);
-                $columns = \Illuminate\Support\Facades\Schema::getColumnListing($instance->getTable());
                 $cleanRow = \Illuminate\Support\Arr::only($payload, $columns);
-
                 $instance->forceFill($cleanRow);
 
-                // On force une version très élevée pour être sûr qu'aucun client n'écrase ça
-                $instance->version = $instance->version + 50;
+                // On force une version très élevée pour être sûr qu'elle s'impose sur tout le réseau
+                $targetVersion = ((int) ($instance->version ?? 0)) + 50;
+                $instance->version = $targetVersion;
+                if (in_array('base_version', $columns)) {
+                    $instance->base_version = $targetVersion;
+                }
+                $instance->updated_at = now();
+                $instance->saveQuietly();
+            }
+        } elseif ($r->resolution === 'server') {
+            // L'admin choisit de maintenir la vérité du Serveur : on incrémente la version
+            // et on met à jour updated_at pour que les clients synchronisent cette décision au prochain Pull
+            if ($instance->exists) {
+                $targetVersion = ((int) ($instance->version ?? 0)) + 1;
+                $instance->version = $targetVersion;
+                if (in_array('base_version', $columns)) {
+                    $instance->base_version = $targetVersion;
+                }
                 $instance->updated_at = now();
                 $instance->saveQuietly();
             }
         }
 
-        // L'admin choisit de garder la donnée du serveur ('server') ou le client a été appliqué.
         // Dans tous les cas, le conflit est résolu.
         $log->update([
             'status' => 'synced',

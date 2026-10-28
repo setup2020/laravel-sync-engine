@@ -39,28 +39,44 @@ class SyncPushJob implements ShouldQueue
             $tableName = (new $this->modelClass)->getTable();
 
             if ($response->successful()) {
-                $instance = new $this->modelClass;
-                $keyName = $instance->getKeyName();
+                $responseData = $response->json();
+                $syncedUuids = $responseData['synced'] ?? $records->pluck('uuid')->all();
+                $conflictedUuids = $responseData['conflicts'] ?? [];
+                $versions = $responseData['versions'] ?? [];
 
-                if (is_array($keyName)) {
-                    // Clé composite : mise à jour par combinaison des colonnes de la clé
-                    foreach ($records as $record) {
-                        $itemQuery = $this->modelClass::query();
-                        foreach ($keyName as $col) {
-                            $itemQuery->where($col, $record->$col);
+                $columns = \Illuminate\Support\Facades\Schema::getColumnListing($tableName);
+                $hasBaseVersion = in_array('base_version', $columns);
+
+                foreach ($records as $record) {
+                    if (in_array($record->uuid, $syncedUuids)) {
+                        $record->is_synced = true;
+                        if ($hasBaseVersion) {
+                            $targetVer = $versions[$record->uuid] ?? $record->version;
+                            $record->base_version = $targetVer;
+                            $record->version = $targetVer;
                         }
-                        $itemQuery->update(['is_synced' => true]);
+                        $record->saveQuietly();
                     }
-                } else {
-                    $this->modelClass::whereIn($keyName, $records->pluck($keyName))
-                        ->update(['is_synced' => true]);
                 }
 
-                \png\SyncEngine\Models\SyncLog::where('table', $tableName)
-                    ->whereIn('uuid', $records->pluck('uuid'))
-                    ->update(['status' => 'synced', 'message' => null]);
+                if (!empty($syncedUuids)) {
+                    \png\SyncEngine\Models\SyncLog::where('table', $tableName)
+                        ->whereIn('uuid', $syncedUuids)
+                        ->update(['status' => 'synced', 'message' => null]);
+                }
 
-                Log::info('[Sync-Engine Local] Push réussi ! Les enregistrements sont marqués comme synchronisés.');
+                if (!empty($conflictedUuids)) {
+                    \png\SyncEngine\Models\SyncLog::where('table', $tableName)
+                        ->whereIn('uuid', $conflictedUuids)
+                        ->update([
+                            'status'  => 'conflict',
+                            'message' => 'Conflit détecté par le serveur lors du push (Server Wins)'
+                        ]);
+
+                    Log::warning("[Sync-Engine Local] Conflits détectés sur {$tableName} pour " . count($conflictedUuids) . " enregistrement(s).");
+                }
+
+                Log::info('[Sync-Engine Local] Push terminé. Succès: ' . count($syncedUuids) . ', Conflits: ' . count($conflictedUuids));
             } else {
                 \png\SyncEngine\Models\SyncLog::where('table', $tableName)
                     ->whereIn('uuid', $records->pluck('uuid'))

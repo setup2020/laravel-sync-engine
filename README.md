@@ -76,9 +76,13 @@ SYNC_IS_SERVER=true
 Puis exécutez vos migrations sur le serveur (`php artisan migrate`). Une nouvelle table d'audit `sync_histories` sera créée et enregistrera chaque transaction (Client, type d'opération Push/Pull, Statut, Nombre d'enregistrements insérés ou envoyés).
 _Note : Pour éviter tout encombrement inutile, cette table d'historique globale n'est volontairement pas créée sur les bases de données des applications clientes._
 
-### 7. Gestion Manuelle des Conflits (Serveur central)
+### 7. Gestion Précise des Conflits (Optimistic Concurrency Control - OCC)
 
-Le plugin garantit l'intégrité des données grâce à une protection stricte contre les écrasements (_Server Wins_). Si un client tente de synchroniser (Push) un enregistrement disposant d'une version numériquement obsolète comparativement à celle du serveur, la modification du client est interceptée, bloquée et consignée dans `sync_logs` avec le statut `"conflict"`.
+Le plugin garantit l'intégrité absolue des données grâce à un contrôle de concurrence optimiste basé sur la notion de **`base_version`** :
+- **`version`** : Représente le compteur d'évolution de la ligne.
+- **`base_version`** : Mémorise la version exacte dont le client est parti lors de sa dernière synchronisation avec le serveur.
+
+Même si un client hors-ligne modifie une ligne 10 fois en local (faisant grimper sa `version` locale), sa `base_version` reste ancrée à la version qu'il avait récupérée du serveur. Lors du Push, si le serveur a également été modifié entre-temps (`version_serveur !== client.base_version`), la modification du client est interceptée, bloquée et consignée dans `sync_logs` avec le statut `"conflict"`, évitant tout écrasement silencieux !
 
 Vous pouvez résoudre ces conflits grâce à deux routes API pour vos interfaces d'administration :
 
@@ -96,7 +100,7 @@ Charge payload attendue :
 }
 ```
 
-- Si `"server"` : Le serveur maintient sa donnée intacte, et le conflit est acquitté. (Le client téléchargera finalement la vérité du serveur lors de son prochain _Pull_).
+- Si `"server"` : Le serveur maintient sa donnée intacte et incrémente sa version. Le conflit est acquitté et le client s'alignera lors de son prochain _Pull_.
 - Si `"client"` : L'administrateur décide de forcer les données du client. Le serveur intègre la modification et force une version artificiellement haute (`+50`) afin que cette donnée s'impose définitivement sur l'ensemble du réseau !
 
 ## Comment Communiquent l'Application Locale et le Serveur ?
@@ -199,6 +203,66 @@ return new class extends Migration {
             // Méthode inverse très pratique pour le rollback
             $table->dropSyncable();
         });
+    }
+};
+```
+
+### Mise à Niveau d'une Application Déjà en Production (Sans Casse)
+
+Si vos applications (clients ou serveur) tournent déjà en production avec d'anciennes versions du plugin :
+
+> 🛡️ **Rétrocompatibilité Garantie :**  
+> Le trait `Syncable` et les jobs vérifient dynamiquement la présence de la colonne `base_version`. Tant que la table n'a pas été mise à niveau, **aucune erreur SQL ne survient** et le moteur fonctionne en mode de compatibilité.
+
+Pour activer le contrôle de concurrence OCC (`base_version`) sur vos tables existantes :
+
+#### Méthode 1 : Commande Automatique Artisan (Recommandée)
+Exécutez simplement la commande fournie par le package sur le serveur et sur chaque client :
+
+```bash
+php artisan sync:upgrade-base-version
+```
+
+Cette commande parcourt automatiquement toutes les tables déclarées dans votre fichier `config/sync-engine.php` :
+1. Elle ajoute la colonne `base_version` si elle est absente.
+2. Elle initialise immédiatement `base_version = version` pour tous les enregistrements existants.
+
+#### Méthode 2 : Via une Migration Laravel Standard
+Si vous préférez exécuter une migration `php artisan migrate` classique dans votre pipeline CI/CD :
+
+```php
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
+
+return new class extends Migration {
+    public function up()
+    {
+        $tables = array_keys(config('sync-engine.tables', []));
+
+        foreach ($tables as $table) {
+            if (Schema::hasTable($table) && !Schema::hasColumn($table, 'base_version')) {
+                Schema::table($table, function (Blueprint $t) {
+                    $t->integer('base_version')->default(1)->after('version');
+                });
+
+                DB::table($table)->update(['base_version' => DB::raw('version')]);
+            }
+        }
+    }
+
+    public function down()
+    {
+        $tables = array_keys(config('sync-engine.tables', []));
+
+        foreach ($tables as $table) {
+            if (Schema::hasTable($table) && Schema::hasColumn($table, 'base_version')) {
+                Schema::table($table, function (Blueprint $t) {
+                    $t->dropColumn('base_version');
+                });
+            }
+        }
     }
 };
 ```
