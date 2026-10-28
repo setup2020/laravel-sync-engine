@@ -28,6 +28,7 @@ trait Syncable
             $model->is_synced = false;
         });
 
+
         static::updating(function ($model) {
             // Empêcher le "marquage dirty" de repartir en boucle si l'on modifie uniquement les drapeaux de synchro ('is_synced', 'base_version')
             $dirtyKeys = array_keys($model->getDirty());
